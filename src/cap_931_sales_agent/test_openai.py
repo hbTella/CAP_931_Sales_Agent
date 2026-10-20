@@ -1,18 +1,10 @@
-import os
 
-from dotenv import load_dotenv
-from openai import OpenAI
+def test_sales_agent_uses_local_ollama():
+    """Confirm the project is configured to use the local model."""
 
-# Load variables from the .env file
-load_dotenv()
+    from cap_931_sales_agent import llm_client
 
-# Create the OpenAI client using OPENAI_API_KEY
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-
-# Send a simple test request
-response = client.responses.create(
-    model="gpt-6-luna",
-    input="Respond with exactly: CAP 931 GPT connection successful."
-)
-
-print(response.output_text)
+    assert llm_client.MODEL_NAME == "qwen2.5:3b"
+    assert llm_client.OLLAMA_URL == (
+        "http://localhost:11434/api/generate"
+    )

@@ -10,6 +10,7 @@ requires-python = ">=3.14"
 dependencies = [
     "beautifulsoup4>=4.15.0",
     "openai>=3.26.0",
+    "python-docx>=1.2.0",
     "python-dotenv>=1.2.4",
     "requests>=2.34.2",
     "streamlit>=1.65.0",
@@ -21,3 +22,8 @@ cap-931-sales-agent = "cap_931_sales_agent:main"
 [build-system]
 requires = ["uv_build>=0.12.15,<0.13.0"]
 build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]

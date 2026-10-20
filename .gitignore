@@ -9,3 +9,8 @@ wheels/
 # Virtual environments
 .venv
 .env
+# Generated sales research reports
+sales_research_report.docx
+
+# Pytest cache
+.pytest_cache/

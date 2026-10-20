@@ -1,7 +1,9 @@
 import streamlit as st
+import re
 
 from cap_931_sales_agent.company_research_agent import research_company
 from cap_931_sales_agent.competitor_research_agent import research_competitor
+from cap_931_sales_agent.report_generator import generate_sales_report
 
 # Configure the Streamlit page
 st.set_page_config(
@@ -67,20 +69,7 @@ if submitted:
         st.warning("Please enter both a Product Name and Company URL.")
 
     else:
-        st.subheader("Company Website Research")
-
-        # Show a progress message while the agent works
-        with st.spinner("Researching the company website..."):
-            try:
-                company_summary = research_company(company_url.strip())
-
-                # Display the agent's research results
-                st.markdown(company_summary)
-
-            except Exception as error:
-                st.error(f"Company research failed: {error}")
-
-        # Display the product and sales information entered by the user
+        # Display the product and sales information
         st.subheader("Sales Context")
 
         st.write("**Product:**", product_name)
@@ -91,17 +80,43 @@ if submitted:
         )
         st.write("**Target Customer:**", target_customer or "Not provided")
 
+        # Research the prospective company
+        st.subheader("Company Website Research")
+
+        company_summary = ""
+
+        with st.spinner("Researching the company website..."):
+            try:
+                company_summary = research_company(company_url.strip())
+                
+                # Put each CDO discovery question on a separate line.
+                company_summary = re.sub(
+                    r"\s+(?=Q[1-5]:)",
+                    "\n\n",
+                    company_summary,
+                )
+
+                st.markdown(company_summary)
+
+            except Exception as error:
+                company_summary = (
+                    f"Company research could not be completed: {error}"
+                )
+                st.error(company_summary)
+
+        # Prepare a list to store competitor research results
         competitor_list = [
             url.strip()
             for url in competitor_urls.splitlines()
             if url.strip()
         ]
 
-        
+        competitor_research = []
+
+        # Research each competitor website
         st.subheader("Competitor Research")
 
         if competitor_list:
-            # Research each competitor website separately.
             for url in competitor_list:
                 st.markdown(f"### Competitor: {url}")
 
@@ -109,13 +124,62 @@ if submitted:
                     try:
                         competitor_summary = research_competitor(url)
 
-                        # Display the competitor's research results.
                         st.markdown(competitor_summary)
 
+                        competitor_research.append(
+                            {
+                                "url": url,
+                                "summary": competitor_summary,
+                            }
+                        )
+
                     except Exception as error:
-                        st.error(
-                            f"Research failed for {url}: {error}"
+                        error_summary = (
+                            f"Competitor research could not be completed: "
+                            f"{error}"
+                        )
+                        st.error(f"Research failed for {url}: {error}")
+
+                        competitor_research.append(
+                            {
+                                "url": url,
+                                "summary": error_summary,
+                            }
                         )
         else:
             st.info("No competitor URLs provided.")
-        
+
+        # Generate the report using the Per Scholas Word template
+        st.subheader("Per Scholas Sales Research Report")
+
+        try:
+            report_path = generate_sales_report(
+                template_path="per_scholas_template.docx",
+                output_path="sales_research_report.docx",
+                product_name=product_name.strip(),
+                product_category=product_category.strip(),
+                value_proposition=value_proposition.strip(),
+                target_customer=target_customer.strip(),
+                company_url=company_url.strip(),
+                company_research=company_summary,
+                competitor_research=competitor_research,
+            )
+
+            # Read the generated document for download
+            with open(report_path, "rb") as report_file:
+                report_bytes = report_file.read()
+
+            st.success("Your Word report has been generated!")
+
+            st.download_button(
+                label="Download Sales Research Report",
+                data=report_bytes,
+                file_name="sales_research_report.docx",
+                mime=(
+                    "application/vnd.openxmlformats-officedocument."
+                    "wordprocessingml.document"
+                ),
+            )
+
+        except Exception as error:
+            st.error(f"Report generation failed: {error}")

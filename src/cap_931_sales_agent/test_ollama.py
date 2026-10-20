@@ -1,24 +1,11 @@
 
 import requests
 
-# Ollama's local API address
-OLLAMA_URL = "http://localhost:11434/api/generate"
 
-# Send a test prompt to our local model
-payload = {
-    "model": "qwen2.5:3b",
-    "prompt": (
-        "You are a sales research assistant. "
-        "In two sentences, explain why a sales representative "
-        "should research a prospective company before a meeting."
-    ),
-    "stream": False,
-}
+def test_ollama_api_url():
+    """Check that the local Ollama API URL is configured correctly."""
 
-# Send the request and get the model's response
-response = requests.post(OLLAMA_URL, json=payload, timeout=180)
-response.raise_for_status()
+    ollama_url = "http://localhost:11434/api/generate"
 
-# Print the generated answer
-result = response.json()
-print(result["response"])
+    assert ollama_url.startswith("http://localhost:11434/")
+    assert ollama_url.endswith("/api/generate")

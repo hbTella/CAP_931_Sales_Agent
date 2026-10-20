@@ -1,18 +1,10 @@
 
 from cap_931_sales_agent.company_research_agent import research_company
 
-# Test the research agent with Microsoft's public website
-company_url = "https://www.microsoft.com/en-us/about"
 
-print("Researching Microsoft...")
-print("This may take a little time.")
+def test_research_company_returns_a_string():
+    """Check that the company research function returns text."""
+    result = research_company("https://www.microsoft.com/en-us/about")
 
-try:
-    result = research_company(company_url)
-
-    print("\nCOMPANY RESEARCH RESULTS")
-    print("========================")
-    print(result)
-
-except Exception as error:
-    print(f"\nResearch failed: {error}")
+    assert isinstance(result, str)
+    assert len(result) > 0
