@@ -45,28 +45,87 @@ def research_competitor(competitor_url: str) -> str:
             f"Please check the URL and try again. Details: {error}"
         )
 
-    # Extract the webpage title and text.
-    soup = BeautifulSoup(response.text, "html.parser")
+    
+    # Extract text from the supplied page and common product pages.
+    from urllib.parse import urljoin
 
-    page_title = (
-        soup.title.get_text(" ", strip=True)
-        if soup.title
-        else parsed_url.netloc
-    )
+    base_url = f"{parsed_url.scheme}://{parsed_url.netloc}"
 
-    for element in soup(
-        ["script", "style", "nav", "footer", "header", "noscript"]
-    ):
-        element.decompose()
+    candidate_urls = [
+        competitor_url,
+        urljoin(base_url + "/", "products"),
+        urljoin(base_url + "/", "products/"),
+        urljoin(base_url + "/", "product"),
+        urljoin(base_url + "/", "solutions"),
+    ]
 
-    source_text = soup.get_text(separator=" ", strip=True)
-    source_text = re.sub(r"\s+", " ", source_text).strip()
+    source_sections = []
+    visited_urls = set()
+    page_title = parsed_url.netloc
+
+    for page_url in candidate_urls:
+        if page_url in visited_urls:
+            continue
+
+        visited_urls.add(page_url)
+
+        try:
+            page_response = requests.get(
+                page_url,
+                headers={
+                    "User-Agent": (
+                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                        "AppleWebKit/537.36 (KHTML, like Gecko) "
+                        "Chrome/131.0.0.0 Safari/537.36"
+                    )
+                },
+                timeout=20,
+            )
+            page_response.raise_for_status()
+        except requests.RequestException:
+            continue
+
+        page_soup = BeautifulSoup(
+            page_response.text, "html.parser"
+        )
+
+        title = (
+            page_soup.title.get_text(" ", strip=True)
+            if page_soup.title
+            else page_url
+        )
+
+        if page_url == competitor_url:
+            page_title = title
+
+        for element in page_soup(
+            ["script", "style", "nav", "footer", "header", "noscript"]
+        ):
+            element.decompose()
+
+        page_text = page_soup.get_text(
+            separator=" ", strip=True
+        )
+        page_text = re.sub(r"\s+", " ", page_text).strip()
+
+        if page_text:
+            source_sections.append(
+                f"Page title: {title}\n"
+                f"Source URL: {page_url}\n"
+                f"Page text:\n{page_text[:5000]}"
+            )
+
+    source_text = "\n\n".join(source_sections)
+
+    print("Competitor pages retrieved:", len(source_sections))
+    print("Retrieved competitor text:", source_text[:2000])
 
     if len(source_text) < 500:
         return (
             "The webpage does not contain enough readable text "
             "to complete competitor research."
         )
+
 
     # Identify the company name from the webpage title.
     title_parts = [
@@ -123,7 +182,7 @@ Do not include a Sources section or repeat these instructions.
 Company name: {company_name}
 
 Webpage text:
-{source_text[:4000]}
+{source_text[:10000]}
 """
 
     try:
@@ -264,25 +323,36 @@ Report to proofread:
             "be extracted from the generated report."
         )
 
+    
     # Ask the model to identify product and service names.
     product_prompt = f"""
-Identify up to five specific product or service names explicitly
-mentioned in the webpage text.
+You are extracting product names from a company's website.
+
+Find up to five product or service names that appear explicitly
+in the webpage text below.
+
+The text may mention names such as Marketing Hub, Sales Hub,
+or Service Hub. These are examples only. Extract names for
+the company represented by the supplied text.
 
 Rules:
-- Use the exact names found in the webpage text.
-- Return one name per line.
-- Do not return the company name.
-- Do not return general feature descriptions or explanations.
+- Copy each name exactly as written in the webpage text.
+- Return one product name per line.
+- Do not include descriptions or explanations.
+- Do not include the company name by itself.
 - Do not invent names.
-- Return NONE if no specific names can be identified.
+- If no names are found, return NONE.
 
 Webpage text:
 {source_text[:8000]}
+
+Product names:
 """
+
 
     try:
         product_response = generate_response(product_prompt).strip()
+        print("Product candidates:", product_response)
     except Exception:
         product_response = "NONE"
 
@@ -362,8 +432,34 @@ c. How do you measure the business impact of analytics, and which business outco
     )
     final_report = final_report.strip()
 
-    # Append the source URL.
+        # Append all retrieved source pages without duplicate URLs.
+    source_lines = []
+    seen_source_urls = set()
+
+    for section in source_sections:
+        title = "Retrieved webpage"
+        source_url = ""
+
+        for line in section.splitlines():
+            if line.startswith("Page title: "):
+                title = line.replace("Page title: ", "", 1).strip()
+
+            elif line.startswith("Source URL: "):
+                source_url = line.replace("Source URL: ", "", 1).strip()
+
+        # Ignore duplicate URLs, including trailing-slash variations.
+        normalized_url = source_url.rstrip("/").casefold()
+
+        if source_url and normalized_url not in seen_source_urls:
+            seen_source_urls.add(normalized_url)
+            source_lines.append(f"- {title}: {source_url}")
+
+    if not source_lines:
+        source_lines.append(f"- {page_title}: {response.url}")
+
     return (
         f"{final_report}\n\n"
-        f"### Source\n- {page_title}: {response.url}"
+        f"### Sources\n"
+        + "\n".join(source_lines)
     )
+    

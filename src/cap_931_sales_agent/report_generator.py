@@ -84,6 +84,7 @@ def generate_sales_report(
     company_url: str,
     company_research: str,
     competitor_research: list[dict],
+    product_overview: str = "",
 ) -> str:
     """Fill the Per Scholas Word template with sales research."""
 
@@ -128,7 +129,7 @@ def generate_sales_report(
             f"{product_category or 'not provided'}. The value proposition "
             f"is {value_proposition.rstrip('. ') if value_proposition else 'not provided'}. "
             f"The target customer "
-            f"is {target_customer or 'not provided'}."
+            f"is {target_customer.rstrip('. ') if target_customer else 'not provided'}."
         )
 
     # Fill the Steps section with properly formatted research.
@@ -138,7 +139,7 @@ def generate_sales_report(
         )
         
         steps_placeholder.style = "Normal"
-        
+
         # Remove numbering and indentation from the introductory paragraph.
         pPr = steps_placeholder._p.get_or_add_pPr()
         numPr = pPr.find(qn("w:numPr"))
@@ -153,6 +154,15 @@ def generate_sales_report(
             steps_placeholder,
             "Step 1: Gather product and target-customer information.",
         )
+        # Add the uploaded product overview to the report.
+        if product_overview.strip():
+            anchor = insert_after(
+                anchor,
+                "Uploaded Product Overview",
+                "Heading 2",
+            )
+            anchor = add_research_text(anchor, product_overview)
+
         anchor = insert_after(
             anchor,
             "Step 2: Research the prospective company's public website.",
@@ -188,14 +198,27 @@ def generate_sales_report(
                 "No competitor research was provided.",
             )
 
+    
     # Fill in the Conclusion section.
     if conclusion_placeholder is not None:
-        conclusion_placeholder.text = (
-            "The research identifies company priorities, competitor "
-            "positioning, and questions for a sales discovery meeting. "
-            "The sales representative should validate these findings "
-            "with the prospect before making recommendations."
-        )
+        if competitor_research:
+            conclusion_text = (
+                "The research identifies company priorities, competitor "
+                "positioning, and questions for a sales discovery meeting. "
+                "The sales representative should validate these findings "
+                "with the prospect before making recommendations."
+            )
+        else:
+            conclusion_text = (
+                "The research identifies company priorities and questions "
+                "for a sales discovery meeting. Competitor research was not "
+                "provided, so competitor positioning was not evaluated. "
+                "The sales representative should validate these findings "
+                "with the prospect before making recommendations."
+            )
+
+        conclusion_placeholder.text = conclusion_text
+
 
     # Add a clean source list under Appendix.
     if appendix_heading is not None:

@@ -69,7 +69,7 @@ def fetch_page(url: str) -> dict | None:
     }
 
 
-def research_company(company_url: str) -> str:
+def research_company(company_url: str, product_overview: str = "" ) -> str:
     """Research a company using its homepage and relevant public pages."""
 
     # Add HTTPS if the user enters a domain without a URL scheme.
@@ -89,16 +89,27 @@ def research_company(company_url: str) -> str:
 
     base_url = f"{parsed_url.scheme}://{parsed_url.netloc}/"
 
+    
+    
     # Try the supplied URL first, followed by common company pages.
     candidate_urls = [
         company_url,
-        urljoin(base_url, "en-us/about"),
-        urljoin(base_url, "en-us/about/company"),
         urljoin(base_url, "about"),
         urljoin(base_url, "about-us"),
         urljoin(base_url, "company"),
         urljoin(base_url, "about/company"),
+        urljoin(base_url, "products"),
+        urljoin(base_url, "products/"),
+        urljoin(base_url, "product"),
+        urljoin(base_url, "solutions"),
+        urljoin(base_url, "services"),
+        urljoin(base_url, "platform"),
+        urljoin(base_url, "products/marketing"),
+        urljoin(base_url, "products/sales"),
+        urljoin(base_url, "products/service"),
+        urljoin(base_url, "products/data"),
     ]
+
 
     # Remove duplicate URLs while preserving their order.
     candidate_urls = list(dict.fromkeys(candidate_urls))
@@ -139,8 +150,11 @@ def research_company(company_url: str) -> str:
             seen_urls.add(final_url)
             unique_pages.append(page)
 
-    # Use up to two different pages for the research summary.
-    selected_pages = unique_pages[:2]
+    
+    # Keep up to four different pages so product information
+    # is more likely to be included in the research summary.
+    selected_pages = unique_pages[:4]
+
     # Include the page title and URL so the model can identify its sources.
     source_sections = []
 
@@ -169,115 +183,67 @@ Page text:
 You are a sales research assistant helping a sales representative
 prepare for a meeting with a prospective company.
 
+Product overview provided by the user:
+{product_overview if product_overview.strip() else "No product overview provided."}
+
+Use the product overview only as context for preparing relevant
+sales discovery questions. Base company facts, products, and
+business priorities only on the retrieved webpage text.
+
+Do not assume the prospective company needs this product.
+Do not present claims from the product overview as facts about
+the prospective company.
+
 Use only the webpage text provided below. Do not invent facts or
 add information from your general knowledge.
+
+When identifying products and services, review all provided webpage
+text and include only product names that can be verified in that text.
+If no specific product or service names can be verified, write:
+"Not found in the retrieved webpages."
+
+When identifying business priorities, include clearly stated company
+goals, commitments, or strategic priorities from the webpage text.
+Summarize them accurately without adding unsupported claims.
+
+Keep company facts separate from the user's product overview.
+The user's product overview describes the product being sold, not
+the prospective company's existing products or business priorities.
+
 
 If the available text does not support an answer, write:
 "Not found in the retrieved webpages."
 
 
-Follow this output template exactly. Include every section,
-even if information for a section is unavailable.
+Follow this output template exactly. Include every section, even if information for a section is unavailable.
 
 1. Company Overview
-Write a short paragraph describing the company.
+Write a short paragraph describing the company, based only on the retrieved webpage text.
 
 2. Products and Services
 Write a bullet list of verified products and services.
-If none are verified, write: Not found in the retrieved webpages.
+
+Product verification rules:
+- Include only specific product or service names that appear exactly in the retrieved webpage text.
+- Verify each name against the provided text before including it.
+- Do not invent names by combining words or adding terms such as "AI," "Force," "Cloud," or "Platform" unless the complete name appears in the source text.
+- Do not infer product names from general descriptions, features, technologies, or business topics.
+- Do not use general knowledge to fill gaps in the retrieved text.
+- Include a product only when the text supports that the company offers it.
+- List each product or service only once.
+- Exclude navigation links, careers, investor relations, and blogs.
+- Do not list the user's proposed product unless the source confirms that the company offers it.
+- If no products or services can be verified, write: Not found in the retrieved webpages.
 
 3. Business Priorities
-Write a bullet list of priorities supported by the webpage.
-If none are verified, write: Not found in the retrieved webpages.
-
-4. Questions for a Chief Data Officer
-Write exactly five discovery questions, numbered 1. through 5.
-Start the question numbering at 1 within this section.
-Do not use any other numbered main sections.
-Do not omit sections 1, 2, or 3 when section 4 is generated.
-
-1. Company Overview
-Briefly explain what the company does.
-
-
-
-2. Products and Services
-
-Identify specific products and services that are explicitly
-named or clearly described in the retrieved company website text.
-
-Product names may appear anywhere in the retrieved text,
-not only in a dedicated product list.
-
-Include a product only when the text supports that it is
-offered by the company. Do not treat general topics such as
-AI, cloud computing, or research as products unless they
-are identified as specific offerings.
-
-List each product only once. Exclude website navigation links,
-careers, investor relations, and blogs.
-
-Do not list the user's proposed product or sales offering
-unless the source confirms that the company offers it.
-
-If no products or services can be verified, write:
-"Not found in the retrieved webpages."
-
-Never invent product names.
-
-
-3. Business Priorities
-
-Identify the company's stated mission, goals, values, and
-business priorities using the retrieved website text.
-
-These may include commitments or priorities described
-on an About, Mission, Values, or Strategy page.
-
-Summarize each priority in a concise bullet point.
-Use only information supported by the retrieved text.
-Do not present assumptions as confirmed company strategy.
-
-If no business priorities can be verified, write:
-"Not found in the retrieved webpages."
-
+Write a bullet list of company goals, commitments, or strategic priorities explicitly supported by the retrieved webpage text. Do not add unsupported claims. If none can be verified, write: Not found in the retrieved webpages.
 
 4. Questions for a Chief Data Officer
 
-Suggest exactly 5 questions a sales representative could ask
-during an initial sales discovery meeting.
+Write exactly five relevant sales discovery questions. Format them as plain text using exactly these labels: Q1., Q2., Q3., Q4., and Q5.
 
-The questions may relate to customer data integration,
-customer behavior analysis, retention, data quality, and
-measuring business outcomes.
-
-Focus on understanding the company's current processes,
-priorities, goals, and opportunities for improvement.
-
-Use open-ended questions that invite the Chief Data Officer
-to explain their current approach and business priorities.
-
-Do not assume the company has problems, unmet needs, or plans
-to purchase a Customer Analytics Platform.
-
-Do not mention or promote our Customer Analytics Platform
-in the questions. First understand the company's needs before
-exploring whether a solution could help.
-
-Make each question specific, practical, and relevant to a
-Chief Data Officer. Avoid repeating the same idea.
-
-
-Use the exact labels Q1, Q2, Q3, Q4, and Q5 for the five
-questions in section 4, in that order.
-Do not label the questions 5, 6, 7, 8, or 9.
-Put each question on a separate line.
-
-Label these as suggested sales questions, not facts about
-the company.
-
-Do not create a Sources section. The application will add
-verified source URLs separately.
+Put each question on its own line. Do not use Markdown headings (such as # or ###), bold formatting, or any other numbering format for these questions. Base the questions on verified company information and the user's product overview. Do not assume the company needs the proposed product.
+Do not add extra main sections or repeat any section.
 
 Retrieved webpages:
 {combined_text}

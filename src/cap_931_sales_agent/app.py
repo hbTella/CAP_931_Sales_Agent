@@ -1,6 +1,8 @@
+
 import streamlit as st
 import re
 
+from cap_931_sales_agent.document_reader import read_uploaded_document
 from cap_931_sales_agent.company_research_agent import research_company
 from cap_931_sales_agent.competitor_research_agent import research_competitor
 from cap_931_sales_agent.report_generator import generate_sales_report
@@ -69,6 +71,30 @@ if submitted:
         st.warning("Please enter both a Product Name and Company URL.")
 
     else:
+        # Read the uploaded product overview, if provided
+        product_overview_text = ""
+
+        if product_overview is not None:
+            try:
+                product_overview_text = read_uploaded_document(
+                    product_overview
+                )
+
+                if product_overview_text:
+                    st.success(
+                        "Product overview uploaded and read successfully."
+                    )
+                    with st.expander("View extracted document text"):
+                        st.text(product_overview_text)
+                else:
+                    st.warning(
+                        "No readable text was found in the uploaded document."
+                    )
+
+            except Exception as error:
+                st.error(f"Could not read the uploaded document: {error}")
+                st.stop()
+
         # Display the product and sales information
         st.subheader("Sales Context")
 
@@ -80,6 +106,10 @@ if submitted:
         )
         st.write("**Target Customer:**", target_customer or "Not provided")
 
+        if product_overview_text:
+            st.write("**Uploaded Product Overview:**")
+            st.write(product_overview_text)
+
         # Research the prospective company
         st.subheader("Company Website Research")
 
@@ -87,8 +117,8 @@ if submitted:
 
         with st.spinner("Researching the company website..."):
             try:
-                company_summary = research_company(company_url.strip())
-                
+                company_summary = research_company(company_url.strip(), product_overview=product_overview_text)
+
                 # Put each CDO discovery question on a separate line.
                 company_summary = re.sub(
                     r"\s+(?=Q[1-5]:)",
@@ -163,6 +193,7 @@ if submitted:
                 company_url=company_url.strip(),
                 company_research=company_summary,
                 competitor_research=competitor_research,
+                product_overview=product_overview_text,
             )
 
             # Read the generated document for download
