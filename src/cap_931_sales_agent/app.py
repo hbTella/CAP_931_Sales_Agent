@@ -121,7 +121,7 @@ if submitted:
 
                 # Put each CDO discovery question on a separate line.
                 company_summary = re.sub(
-                    r"\s+(?=Q[1-5]:)",
+                    r"\s+(?=Q[1-5][.:])",
                     "\n\n",
                     company_summary,
                 )

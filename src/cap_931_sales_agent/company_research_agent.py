@@ -1,3 +1,5 @@
+
+import re
 import requests
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin, urlsplit
@@ -5,255 +7,369 @@ from urllib.parse import urljoin, urlsplit
 from cap_931_sales_agent.llm_client import generate_response
 
 
-def fetch_page(url: str) -> dict | None:
-    """Download a webpage and extract its readable text."""
-
-    headers = {
-        "User-Agent": (
-            "Mozilla/5.0 (compatible; SalesResearchPrototype/1.0)"
-        )
-    }
+def fetch_page(url: str) -> str:
+    """Download a webpage and return its readable text."""
 
     try:
         response = requests.get(
             url,
-            headers=headers,
-            timeout=20,
+            timeout=15,
+            headers={
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 Chrome/131.0 Safari/537.36"
+                )
+            },
         )
         response.raise_for_status()
 
-    except requests.RequestException:
-        # Continue to another page if this page cannot be retrieved.
-        return None
+        soup = BeautifulSoup(response.text, "html.parser")
 
-    # Parse the webpage's HTML.
-    soup = BeautifulSoup(response.text, "html.parser")
+        for element in soup(
+            ["script", "style", "nav", "footer", "header", "noscript"]
+        ):
+            element.decompose()
 
-    page_title = (
-        soup.title.get_text(strip=True)
-        if soup.title
-        else "Untitled page"
-    )
+        page_text = soup.get_text(separator=" ", strip=True)
+        page_text = " ".join(page_text.split())
 
-    # Remove page elements that usually contain little research value.
-    for element in soup(
-        ["script", "style", "nav", "footer", "header", "noscript"]
-    ):
-        element.decompose()
+        # Do not treat an access-blocked page as useful company evidence.
+        blocked_phrases = [
+            "your request has been blocked",
+            "appears to be from an automated process",
+            "access denied",
+        ]
 
-    website_text = soup.get_text(separator=" ", strip=True)
+        if any(phrase in page_text.casefold() for phrase in blocked_phrases):
+            print(f"Skipping blocked webpage: {url}")
+            return ""
 
-    # Ignore pages that appear to be errors or contain little text.
-    error_words = [
-        "access denied",
-        "403 forbidden",
-        "404 not found",
-        "request blocked",
-        "service unavailable",
+        return page_text
+
+    except requests.RequestException as error:
+        print(f"Could not retrieve {url}: {error}")
+        return ""
+
+
+def extract_company_overview(combined_text: str) -> str:
+    """Extract an explicitly stated mission or purpose."""
+
+    patterns = [
+        # Example: Microsoft's mission is to empower ...
+        r"\b[A-Z][A-Za-z0-9&.-]*"
+        r"(?:\s+[A-Z][A-Za-z0-9&.-]*){0,3}"
+        r"[’']s mission is[^.!?]*[.!?]",
+
+        # Example: Our mission is to help ...
+        r"\bOur mission is[^.!?]*[.!?]",
+
+        # Example: Our purpose is to ...
+        r"\bOur purpose is[^.!?]*[.!?]",
     ]
 
-    page_description = (
-        f"{page_title} {website_text[:1500]}"
-    ).lower()
+    for pattern in patterns:
+        match = re.search(pattern, combined_text)
 
-    if any(word in page_description for word in error_words):
-        return None
+        if match:
+            return match.group(0).strip()
 
-    if len(website_text) < 500:
-        return None
+    return "Not found in the retrieved webpages."
+
+
+def normalize_heading(line: str) -> str:
+    """Normalize a report heading returned by the language model."""
+
+    heading = line.strip()
+
+    # Remove Markdown heading marks, such as ###.
+    heading = re.sub(r"^#+\s*", "", heading)
+
+    # Remove numbering, such as 1. or 2.
+    heading = re.sub(r"^\d+\.\s*", "", heading)
+
+    return heading.strip(" :*").casefold()
+
+
+def parse_report(summary: str) -> dict:
+    """Organize the model's response into consistent report sections."""
+
+    aliases = {
+        "company overview": "overview",
+        "products and services": "products",
+        "business priorities": "priorities",
+        "questions for a chief data officer": "questions",
+    }
+
+    sections = {
+        "overview": [],
+        "products": [],
+        "priorities": [],
+        "questions": [],
+    }
+
+    current_section = None
+
+    for line in summary.splitlines():
+        heading = normalize_heading(line)
+
+        if heading in aliases:
+            current_section = aliases[heading]
+            # A repeated heading starts a fresh section.
+            sections[current_section] = []
+            continue
+
+        if current_section:
+            sections[current_section].append(line)
 
     return {
-        "url": response.url,
-        "title": page_title,
-        "text": website_text[:2500],
+        name: "\n".join(lines).strip()
+        for name, lines in sections.items()
     }
 
 
-def research_company(company_url: str, product_overview: str = "" ) -> str:
-    """Research a company using its homepage and relevant public pages."""
+def research_company(
+    company_url: str,
+    product_overview: str = "",
+) -> str:
+    """Research a company and prepare a sales discovery report."""
 
-    # Add HTTPS if the user enters a domain without a URL scheme.
-    company_url = company_url.strip()
+    parsed_url = urlsplit(company_url.strip())
 
-    if not company_url.startswith(("https://", "http://")):
-        company_url = "https://" + company_url
-
-    # Identify the website's domain so we can build page candidates.
-    parsed_url = urlsplit(company_url)
-
-    if not parsed_url.netloc:
+    if (
+        parsed_url.scheme not in ("http", "https")
+        or not parsed_url.netloc
+    ):
         return (
-            "Please enter a valid company website URL, "
-            "such as https://www.microsoft.com"
+            "Please enter a valid company URL beginning with "
+            "http:// or https://."
         )
 
-    base_url = f"{parsed_url.scheme}://{parsed_url.netloc}/"
+    base_url = f"{parsed_url.scheme}://{parsed_url.netloc}"
 
-    
-    
-    # Try the supplied URL first, followed by common company pages.
-    candidate_urls = [
-        company_url,
-        urljoin(base_url, "about"),
-        urljoin(base_url, "about-us"),
-        urljoin(base_url, "company"),
-        urljoin(base_url, "about/company"),
-        urljoin(base_url, "products"),
-        urljoin(base_url, "products/"),
-        urljoin(base_url, "product"),
-        urljoin(base_url, "solutions"),
-        urljoin(base_url, "services"),
-        urljoin(base_url, "platform"),
-        urljoin(base_url, "products/marketing"),
-        urljoin(base_url, "products/sales"),
-        urljoin(base_url, "products/service"),
-        urljoin(base_url, "products/data"),
+    candidate_paths = [
+        company_url.strip(),
+        "/about",
+        "/about-us",
+        "/company",
+        "/about/company",
+        "/products",
+        "/solutions",
+        "/services",
     ]
 
-
-    # Remove duplicate URLs while preserving their order.
-    candidate_urls = list(dict.fromkeys(candidate_urls))
-
-    useful_pages = []
-
-    # Retrieve pages independently so one blocked page does not stop research.
-    for url in candidate_urls:
-        page = fetch_page(url)
-
-        if page:
-            useful_pages.append(page)
-
-    if not useful_pages:
-        return (
-            "I could not retrieve enough readable text from the company's "
-            "website or the common company-information pages I tried. "
-            "The website may block automated requests or use content "
-            "that this prototype cannot read. Try a public About or "
-            "Products page, or another accessible company webpage."
-        )
-
-    # Prefer the pages with the most readable text.
-    useful_pages.sort(
-        key=lambda page: len(page["text"]),
-        reverse=True,
-    )
-
-    
-    # Remove duplicate pages that redirect to the same final URL.
-    unique_pages = []
-    seen_urls = set()
-
-    for page in useful_pages:
-        final_url = page["url"].rstrip("/").lower()
-
-        if final_url not in seen_urls:
-            seen_urls.add(final_url)
-            unique_pages.append(page)
-
-    
-    # Keep up to four different pages so product information
-    # is more likely to be included in the research summary.
-    selected_pages = unique_pages[:4]
-
-    # Include the page title and URL so the model can identify its sources.
     source_sections = []
+    seen_text = set()
 
-    for page in selected_pages:
+    for path in candidate_paths:
+        if path.startswith(("http://", "https://")):
+            page_url = path
+        else:
+            page_url = urljoin(base_url, path)
+
+        page_text = fetch_page(page_url)
+
+        if not page_text:
+            continue
+
+        normalized_text = page_text.casefold()
+
+        if normalized_text in seen_text:
+            continue
+
+        seen_text.add(normalized_text)
+
         source_sections.append(
-            f"""
-Page title: {page["title"]}
-Source URL: {page["url"]}
-
-Page text:
-{page["text"]}
-"""
+            {
+                "url": page_url,
+                "text": page_text[:4000],
+            }
         )
 
-    combined_text = "\n\n".join(source_sections)
+        if len(source_sections) >= 4:
+            break
 
-    
-    # Build the source list ourselves instead of asking the AI to recreate URLs.
-    source_list = "\n".join(
-        f"- {page['title']}: {page['url']}"
-        for page in selected_pages
+    if not source_sections:
+        return (
+            "The company webpages could not be retrieved. "
+            "Check the URL or try another public company webpage."
+        )
+
+    combined_text = "\n\n".join(
+        f"Source: {section['url']}\n{section['text']}"
+        for section in source_sections
     )
 
-    # Ask the local AI model to summarize only the retrieved webpage text.
-    prompt = f"""
-You are a sales research assistant helping a sales representative
-prepare for a meeting with a prospective company.
+    source_list = "\n".join(
+        f"- {section['url']}" for section in source_sections
+    )
 
-Product overview provided by the user:
+    print("\n--- DEBUG: RETRIEVED COMPANY TEXT ---")
+    print(combined_text[:3000])
+    print("\n--- END DEBUG ---\n")
+
+    extracted_overview = extract_company_overview(combined_text)
+
+    prompt = f"""
+You are a careful company research assistant helping a sales team
+prepare for a discovery meeting.
+
+Your task is to extract useful, evidence-based information from the
+company website text provided below.
+
+RULES:
+- Use only the provided webpage evidence for company-specific facts.
+- Ignore irrelevant navigation labels, repeated text, and promotional
+  calls to action.
+- Product names may appear in navigation menus, page headings, or
+  descriptive paragraphs. Consider all of these as possible evidence.
+- Do not invent products, services, company goals, or commitments.
+- The sales product context describes the product offered by our sales
+  team. It is NOT a product offered by the researched company.
+- Do not confuse the researched company's products with our sales product.
+- If relevant evidence is present, summarize it instead of saying
+  "Not found in the retrieved webpages."
+
+SALES PRODUCT CONTEXT:
 {product_overview if product_overview.strip() else "No product overview provided."}
 
-Use the product overview only as context for preparing relevant
-sales discovery questions. Base company facts, products, and
-business priorities only on the retrieved webpage text.
+EXTRACTED COMPANY MISSION OR PURPOSE:
+{extracted_overview if extracted_overview.strip() else "No company mission or purpose could be extracted."}
 
-Do not assume the prospective company needs this product.
-Do not present claims from the product overview as facts about
-the prospective company.
+Return exactly these four sections using these exact headings:
 
-Use only the webpage text provided below. Do not invent facts or
-add information from your general knowledge.
+COMPANY OVERVIEW
+Write 2-3 complete sentences describing the company's mission, purpose,
+or business based on the available evidence.
+Use the extracted mission or purpose when available.
+Do not include unsupported claims.
 
-When identifying products and services, review all provided webpage
-text and include only product names that can be verified in that text.
-If no specific product or service names can be verified, write:
-"Not found in the retrieved webpages."
+PRODUCTS AND SERVICES
+List up to five distinct products, services, or platforms explicitly
+named in the webpage evidence.
+Prefer specific product names over generic phrases.
+You may use product names found in navigation menus if they are clearly
+identifiable as company offerings.
+Do not include our sales product.
+If no products or services can be verified, write:
+Not found in the retrieved webpages.
 
-When identifying business priorities, include clearly stated company
-goals, commitments, or strategic priorities from the webpage text.
-Summarize them accurately without adding unsupported claims.
+BUSINESS PRIORITIES
+List the company's explicitly stated goals, commitments, or priorities.
+Look for mission-related commitments and statements about opportunity,
+trust, security, fundamental rights, sustainability, or other goals.
+Include only priorities supported by the evidence.
+If none can be verified, write:
+Not found in the retrieved webpages.
 
-Keep company facts separate from the user's product overview.
-The user's product overview describes the product being sold, not
-the prospective company's existing products or business priorities.
+QUESTIONS FOR A CHIEF DATA OFFICER
+Write exactly five useful, open-ended discovery questions.
+Put each question on a separate line using Q1., Q2., Q3., Q4., Q5.
+Focus on data quality, analytics, reporting, customer insights, and
+business outcomes.
+Connect questions to verified company information when appropriate.
+Do not assume the company already uses our product or has a particular
+problem.
+Avoid phrases such as "our Customer Analytics Platform" that imply
+the prospect has already adopted our product.
 
+Do not add any other sections.
 
-If the available text does not support an answer, write:
-"Not found in the retrieved webpages."
-
-
-Follow this output template exactly. Include every section, even if information for a section is unavailable.
-
-1. Company Overview
-Write a short paragraph describing the company, based only on the retrieved webpage text.
-
-2. Products and Services
-Write a bullet list of verified products and services.
-
-Product verification rules:
-- Include only specific product or service names that appear exactly in the retrieved webpage text.
-- Verify each name against the provided text before including it.
-- Do not invent names by combining words or adding terms such as "AI," "Force," "Cloud," or "Platform" unless the complete name appears in the source text.
-- Do not infer product names from general descriptions, features, technologies, or business topics.
-- Do not use general knowledge to fill gaps in the retrieved text.
-- Include a product only when the text supports that the company offers it.
-- List each product or service only once.
-- Exclude navigation links, careers, investor relations, and blogs.
-- Do not list the user's proposed product unless the source confirms that the company offers it.
-- If no products or services can be verified, write: Not found in the retrieved webpages.
-
-3. Business Priorities
-Write a bullet list of company goals, commitments, or strategic priorities explicitly supported by the retrieved webpage text. Do not add unsupported claims. If none can be verified, write: Not found in the retrieved webpages.
-
-4. Questions for a Chief Data Officer
-
-Write exactly five relevant sales discovery questions. Format them as plain text using exactly these labels: Q1., Q2., Q3., Q4., and Q5.
-
-Put each question on its own line. Do not use Markdown headings (such as # or ###), bold formatting, or any other numbering format for these questions. Base the questions on verified company information and the user's product overview. Do not assume the company needs the proposed product.
-Do not add extra main sections or repeat any section.
-
-Retrieved webpages:
-{combined_text}
+WEBPAGE EVIDENCE:
+{combined_text[:12000]}
 """
 
-    # Generate the research summary.
     summary = generate_response(prompt)
 
-    # Add the actual URLs retrieved by the application.
-    return (
-        f"{summary.strip()}\n\n"
-        f"### Sources\n{source_list}"
+    if not summary or not summary.strip():
+        summary = ""
+
+    # Parse the response so Markdown heading variations are handled.
+    sections = parse_report(summary)
+
+    # Prefer the model's complete overview.
+    overview = sections["overview"]
+
+    if (
+        not overview
+        or overview.casefold().startswith(
+            "not found in the retrieved webpages"
+        )
+    ):
+        overview = extracted_overview
+
+    if not overview:
+        overview = "Not found in the retrieved webpages."
+
+    # Remove the offered product from the company's product list.
+    product_match = re.search(
+        r"(?im)^\s*Product Name:\s*(.+?)\s*$",
+        product_overview,
     )
+
+    products = sections["products"]
+
+    if product_match and products:
+        sales_product_name = product_match.group(1).strip()
+
+        product_lines = [
+            line
+            for line in products.splitlines()
+            if sales_product_name.casefold() not in line.casefold()
+        ]
+
+        products = "\n".join(product_lines).strip()
+
+    if not products:
+        products = "Not found in the retrieved webpages."
+
+    if (
+        products
+        and not products.casefold().startswith(
+            "not found in the retrieved webpages"
+        )
+        and not products.strip("- •").strip()
+    ):
+        products = "Not found in the retrieved webpages."
+
+    priorities = sections["priorities"]
+
+    if not priorities:
+        priorities = "Not found in the retrieved webpages."
+
+    # Extract questions from the model's response.
+    questions = re.findall(
+        r"(?im)^\s*(?:[-*]\s*)?Q\d+\.\s*(.+?)\s*$",
+        summary,
+    )
+
+    # Keep five questions and supply neutral fallbacks if necessary.
+    fallback_questions = [
+        "How does your team currently combine data from different systems?",
+        "Which metrics are most important for measuring business performance?",
+        "What reporting or analytics challenges does your team face?",
+        "How do you measure the business impact of data-driven decisions?",
+        "What insights would help your team make better-informed decisions?",
+    ]
+
+    questions = questions[:5]
+
+    while len(questions) < 5:
+        questions.append(fallback_questions[len(questions)])
+
+    # Assemble a report with consistent headings.
+    report = (
+        f"COMPANY OVERVIEW\n{overview}\n\n"
+        f"PRODUCTS AND SERVICES\n{products}\n\n"
+        f"BUSINESS PRIORITIES\n{priorities}\n\n"
+        "QUESTIONS FOR A CHIEF DATA OFFICER\n"
+        + "\n".join(
+            f"Q{i}. {question}"
+            for i, question in enumerate(questions, start=1)
+        )
+    )
+
+    print("\n--- DEBUG: COMPANY SUMMARY ---")
+    print(report)
+    print("\n--- END DEBUG ---\n")
+
+    return f"{report}\n\n### Sources\n{source_list}"
