@@ -51,29 +51,34 @@ def fetch_page(url: str) -> str:
         return ""
 
 
+
+
 def extract_company_overview(combined_text: str) -> str:
-    """Extract an explicitly stated mission or purpose."""
+    """Extract a company description or mission statement."""
 
     patterns = [
-        # Example: Microsoft's mission is to empower ...
-        r"\b[A-Z][A-Za-z0-9&.-]*"
-        r"(?:\s+[A-Z][A-Za-z0-9&.-]*){0,3}"
-        r"[’']s mission is[^.!?]*[.!?]",
+        r"\b[A-Z][A-Za-z0-9&.'’-]*(?:\s+[A-Z][A-Za-z0-9&.'’-]*){0,3}"
+        r"\s+is\s+(?:an?|the)\s+[^.!?]{10,250}[.!?]",
 
-        # Example: Our mission is to help ...
-        r"\bOur mission is[^.!?]*[.!?]",
+        r"\b[A-Z][A-Za-z0-9&.'’-]*(?:\s+[A-Z][A-Za-z0-9&.'’-]*){0,3}"
+        r"[’']s mission is[^.!?]{10,250}[.!?]",
 
-        # Example: Our purpose is to ...
-        r"\bOur purpose is[^.!?]*[.!?]",
+        r"\bOur mission is[^.!?]{10,250}[.!?]",
+
+        r"\bOur purpose is[^.!?]{10,250}[.!?]",
     ]
 
     for pattern in patterns:
         match = re.search(pattern, combined_text)
 
         if match:
-            return match.group(0).strip()
+            description = re.sub(r"\s+", " ", match.group(0)).strip()
+
+            if not description.startswith("Source:"):
+                return description
 
     return "Not found in the retrieved webpages."
+
 
 
 def normalize_heading(line: str) -> str:
@@ -130,6 +135,7 @@ def parse_report(summary: str) -> dict:
 def research_company(
     company_url: str,
     product_overview: str = "",
+    company_text: str = "",
 ) -> str:
     """Research a company and prepare a sales discovery report."""
 
@@ -158,41 +164,49 @@ def research_company(
     ]
 
     source_sections = []
-    seen_text = set()
 
-    for path in candidate_paths:
-        if path.startswith(("http://", "https://")):
-            page_url = path
-        else:
-            page_url = urljoin(base_url, path)
-
-        page_text = fetch_page(page_url)
-
-        if not page_text:
-            continue
-
-        normalized_text = page_text.casefold()
-
-        if normalized_text in seen_text:
-            continue
-
-        seen_text.add(normalized_text)
-
+    if company_text.strip():
         source_sections.append(
-            {
-                "url": page_url,
-                "text": page_text[:4000],
-            }
-        )
+        {
+            "url": (
+                "User-provided company information "
+                f"(company URL: {company_url.strip()})"
+            ),
+            "text": company_text.strip()[:4000],
+        }
+    )
+    else:
+        seen_text = set()
 
-        if len(source_sections) >= 4:
-            break
+        for path in candidate_paths:
+            page_url = urljoin(base_url, path)
+            page_text = fetch_page(page_url)
+
+            if not page_text:
+                continue
+
+            if page_text in seen_text:
+                continue
+
+            seen_text.add(page_text)
+
+            source_sections.append(
+                {
+                    "url": page_url,
+                    "text": page_text,
+                }
+            )
+
+            if len(source_sections) >= 4:
+                break
 
     if not source_sections:
         return (
-            "The company webpages could not be retrieved. "
-            "Check the URL or try another public company webpage."
-        )
+        "The company webpages could not be retrieved. "
+        "The website may block automated requests. "
+        "Try another public company webpage that allows access, "
+        "or use an approved alternative source."
+    )
 
     combined_text = "\n\n".join(
         f"Source: {section['url']}\n{section['text']}"
@@ -203,12 +217,9 @@ def research_company(
         f"- {section['url']}" for section in source_sections
     )
 
-    print("\n--- DEBUG: RETRIEVED COMPANY TEXT ---")
-    print(combined_text[:3000])
-    print("\n--- END DEBUG ---\n")
-
     extracted_overview = extract_company_overview(combined_text)
 
+    
     prompt = f"""
 You are a careful company research assistant helping a sales team
 prepare for a discovery meeting.
@@ -238,9 +249,13 @@ EXTRACTED COMPANY MISSION OR PURPOSE:
 Return exactly these four sections using these exact headings:
 
 COMPANY OVERVIEW
-Write 2-3 complete sentences describing the company's mission, purpose,
-or business based on the available evidence.
-Use the extracted mission or purpose when available.
+Write exactly 2-3 concise sentences describing the company's business
+and, when available, its mission or purpose.
+Use the extracted mission or purpose as evidence, but rewrite it in
+your own words as a clean summary.
+Ignore navigation text, video labels, calls to action, and repeated
+webpage content.
+Do not copy long blocks of webpage text.
 Do not include unsupported claims.
 
 PRODUCTS AND SERVICES
@@ -286,6 +301,7 @@ WEBPAGE EVIDENCE:
     # Parse the response so Markdown heading variations are handled.
     sections = parse_report(summary)
 
+    
     # Prefer the model's complete overview.
     overview = sections["overview"]
 
@@ -368,8 +384,5 @@ WEBPAGE EVIDENCE:
         )
     )
 
-    print("\n--- DEBUG: COMPANY SUMMARY ---")
-    print(report)
-    print("\n--- END DEBUG ---\n")
-
     return f"{report}\n\n### Sources\n{source_list}"
+

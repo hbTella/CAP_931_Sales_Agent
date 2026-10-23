@@ -51,6 +51,14 @@ with st.form("sales_research_form"):
         placeholder="https://www.example.com",
     )
 
+    company_text = st.text_area(
+        "Company information (optional)",
+        placeholder=(
+            "If website research fails, paste company information here."
+        ),
+        height=150,
+    )
+
     competitor_urls = st.text_area(
         "Competitor URLs",
         placeholder="Enter one competitor URL per line",
@@ -117,7 +125,17 @@ if submitted:
 
         with st.spinner("Researching the company website..."):
             try:
-                company_summary = research_company(company_url.strip(), product_overview=product_overview_text)
+                if company_text.strip():
+                    company_summary = research_company(
+                        company_url.strip(),
+                        product_overview=product_overview_text,
+                        company_text=company_text.strip(),
+                    )
+                else:
+                    company_summary = research_company(
+                        company_url.strip(),
+                        product_overview=product_overview_text,
+                    )
 
                 # Put each CDO discovery question on a separate line.
                 company_summary = re.sub(
@@ -179,7 +197,7 @@ if submitted:
         else:
             st.info("No competitor URLs provided.")
 
-        # Generate the report using the Per Scholas Word template
+        # Generate the sales research Word report
         st.subheader("Per Scholas Sales Research Report")
 
         try:
